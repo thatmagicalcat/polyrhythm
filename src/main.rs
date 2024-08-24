@@ -1,5 +1,5 @@
 use sfml::{audio::*, graphics::*, system::*, window::*};
-use std::{collections::LinkedList, f32::consts::PI};
+use std::f32::consts::PI;
 
 const TARGET_FPS: u32 = 240;
 const WIDTH: u32 = 1200;
@@ -24,23 +24,21 @@ fn main() {
 
     window.set_framerate_limit(TARGET_FPS);
 
-    let mut font = match Font::from_file("Hack NF.ttf") {
-        Some(f) => f,
-        None => {
-            println!("[Error]: 'Hack NF.tff' not found");
-            std::process::exit(1);
-        }
+    let mut info_text = {
+        let mut font: Box<sfml::SfBox<Font>> = Box::new(Font::from_file("Hack NF.ttf").unwrap());
+        font.set_smooth(true);
+        let mut text = Text::default();
+        text.set_string("");
+        text.set_font(Box::leak(font));
+        text.set_character_size(20);
+        text
     };
 
-    font.set_smooth(true);
-
-    let mut info_text = Text::new("", &font, 20);
     info_text.set_position((10.0, 10.0));
     info_text.set_fill_color(Color::WHITE);
 
     let mut polyrhythm = Polyrhythm::new();
     let mut dtc = Clock::start();
-    let mut fps_ll = LinkedList::new();
 
     while window.is_open() {
         let dt = dtc.restart();
@@ -51,27 +49,15 @@ fn main() {
         }
 
         let fps = 1.0 / dt.as_seconds();
-        fps_ll.push_back(fps);
-        if fps_ll.len() >= 240 {
-            fps_ll.pop_front();
-        }
-
         info_text.set_string(&format!(
-            "FPS: {}/{TARGET_FPS} (max)\nCollisions: {}\nTime Elapsed: {:.0}s/{TIME_SECS:.0}s",
-            {
-                let x = fps_ll.iter().sum::<f32>() / fps_ll.len() as f32;
-                if x > TARGET_FPS as f32 {
-                    "processing...".to_string()
-                } else {
-                    format!("{x:.0}")
-                }
-            },
+            "FPS: {:.0}\nCollisions: {}\nTime Elapsed: {:.0}s/{TIME_SECS:.0}s",
+            fps,
             polyrhythm.num_collisions,
             polyrhythm.elapsed_time.as_seconds(),
         ));
 
         window.clear(Color::BLACK);
-        polyrhythm.draw(&mut window, dt);
+        polyrhythm.draw(&mut window, dt); // draw arcs, circles and play audio
         window.draw(&info_text);
         window.display();
     }
@@ -137,8 +123,7 @@ impl<'a> Polyrhythm<'a> {
         }
     }
 
-    fn draw(&mut self, window: &mut RenderWindow, dt: Time) -> Option<usize> {
-        let mut ret = None;
+    fn draw(&mut self, window: &mut RenderWindow, dt: Time) {
         self.elapsed_time += dt;
 
         for idx in 0..self.arcs.len() {
@@ -147,7 +132,6 @@ impl<'a> Polyrhythm<'a> {
 
             if *collision {
                 itm.glow_start();
-                ret = Some(idx as _);
 
                 // play sound
                 if self.players[idx].status() != SoundStatus::PLAYING {
@@ -156,7 +140,6 @@ impl<'a> Polyrhythm<'a> {
                 }
 
                 *collision = false;
-
             }
 
             itm.draw(window, dt);
@@ -190,8 +173,6 @@ impl<'a> Polyrhythm<'a> {
 
             window.draw(&self.circle);
         }
-
-        ret
     }
 }
 
@@ -226,9 +207,18 @@ impl<'a> Arc<'a> {
             let time_since_glow_start = self.elapsed_time - glow_start_time;
 
             if time_since_glow_start.as_milliseconds() > GLOW_DURATION as i32 {
-                self.arc_shape.set_outline_color(Color::rgb(50, 50, 50));
-                self.glow_start_time = None;
+                // fade out
+
+                let fade_factor = (time_since_glow_start.as_milliseconds() as f32 - GLOW_DURATION)
+                    / GLOW_DURATION;
+                let fade_factor = 1.0 - fade_factor.clamp(0.196_078_43, 1.0);
+
+                let color_val = ((255.0 * fade_factor) as u8).clamp(50, 255);
+                self.arc_shape
+                    .set_outline_color(Color::rgb(color_val, color_val, color_val));
             } else {
+                // fade in
+
                 let fade_factor = time_since_glow_start.as_milliseconds() as f32 / GLOW_DURATION;
                 let fade_factor = fade_factor.clamp(0.196_078_43, 1.0);
                 let color_val = (255.0 * fade_factor) as u8;
@@ -241,7 +231,6 @@ impl<'a> Arc<'a> {
     }
 
     fn glow_start(&mut self) {
-        // if self.glow_start_time.is_some() { return; }
         self.glow_start_time = Some(self.elapsed_time);
     }
 }
